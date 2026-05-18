@@ -1,0 +1,410 @@
+---
+description: AI Self-Driving Crypto Trading Bot — Cursor Project Rules
+globs: ["**/*.py", "**/*.sql", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.env*", "**/*.md"]
+alwaysApply: true
+---
+
+# 🤖 AI Crypto Trading Bot — Project Context & Rules
+
+## Project Overview
+
+This is a **production-grade, self-driving AI cryptocurrency trading bot** for the Binance exchange. It uses a multi-layer AI decision engine (Market Regime Classifier + Temporal Fusion Transformer + RL Agent + Sentiment Analysis) to autonomously select assets, size positions, manage risk, and execute trades. The bot manages a USDT budget of $500–$5,000 and trades spot pairs on Binance.
+
+**This is real-money software. Every line of code has financial consequences.**
+
+---
+
+## 🏗️ Architecture Overview
+
+```
+data/ingestion/       → WebSocket + REST data collection (Binance, CoinGecko, news)
+data/processing/      → Feature engineering (50+ TA indicators, NLP sentiment)
+data/storage/         → TimescaleDB (persistence) + Redis (real-time cache)
+models/               → Regime classifier, TFT, RL agent, FinBERT sentiment
+strategy/             → Universe selection, signal aggregation, portfolio optimization
+risk/                 → Risk manager, position sizer, circuit breakers
+execution/            → Order manager, Binance executor, fee optimizer
+monitoring/           → Grafana, Telegram alerts, performance tracking
+backtesting/          → Event-driven engine, walk-forward validation
+pipeline/             → Auto-retraining, drift detection, meta-learning
+api/                  → FastAPI control interface
+```
+
+---
+
+## 🛑 Critical Rules — Never Violate
+
+### Financial Safety
+- **NEVER place a real order without passing through `RiskManager.validate()`** — this is the single gate that prevents catastrophic losses
+- **NEVER hardcode API keys, secrets, or credentials** — always use `config/settings.py` which reads from environment variables only
+- **NEVER allow withdrawal permissions on the Binance API key** — trade-only permissions only
+- **NEVER skip the backtesting gate** — no strategy or model goes live without passing `backtesting/walk_forward.py` validation
+- **NEVER trade more than 2% of total portfolio value on a single position** — this is enforced in `risk/risk_manager.py`
+- **NEVER deploy 100% of budget** — always keep 20% as USDT reserve
+
+### Code Quality
+- **NEVER use synchronous code in the data ingestion layer** — everything must be `async/await` using `asyncio`
+- **NEVER catch bare `Exception` without logging the full stack trace and context**
+- **NEVER store state in global variables** — use dependency injection or the database
+- **NEVER mutate a DataFrame in-place** — always use `df.copy()` or return new DataFrames
+- **NEVER use `time.sleep()` in async code** — use `asyncio.sleep()`
+
+### Data Integrity
+- **NEVER use future data in feature calculation** — this causes look-ahead bias and invalidates all backtesting
+- **NEVER write to the `candles` table without the upsert conflict handler** — duplicate timestamps will corrupt the dataset
+- **NEVER assume WebSocket data is continuous** — always check for gaps before calculating indicators
+
+---
+
+## 🧱 Module-by-Module Rules
+
+### `data/ingestion/binance_ws.py`
+- Use `python-binance` v1.x async client only — the old `BinanceSocketManager` is deprecated
+- Implement exponential backoff for reconnections: `2^attempt` seconds, max 60s
+- Log every disconnect and reconnect event with timestamp and reason
+- Validate every incoming message has required fields before writing to DB
+- Subscribe to streams: `{symbol}@kline_{interval}`, `{symbol}@trade`, `{symbol}@depth20`
+- Always subscribe to multiple symbols in a single multiplex connection (not individual connections)
+
+```python
+# CORRECT pattern:
+async def create_socket_manager():
+    client = await AsyncClient.create(api_key, api_secret)
+    bsm = BinanceSocketManager(client)
+    streams = [f"{sym.lower()}@kline_1h" for sym in SYMBOLS]
+    return bsm.multiplex_socket(streams)
+
+# WRONG — never do this:
+# BinanceSocketManager(client).start_trade_socket(...)  # Old deprecated API
+```
+
+### `data/processing/features.py`
+- Use `pandas-ta` for all technical indicators — not TA-Lib (installation issues in Docker)
+- Calculate features on a copy of the DataFrame, never the original
+- All indicators must be calculated per (symbol, timeframe) combination
+- Multi-timeframe features: align 15m, 1h, 4h features to the same UTC timestamp using `pd.merge_asof`
+- Mark any row where features have NaN values — don't fill with zeros (this creates false signals)
+- Feature names must follow pattern: `{indicator}_{period}_{timeframe}` e.g. `rsi_14_1h`
+
+```python
+# CORRECT:
+def calculate_features(df: pd.DataFrame) -> pd.DataFrame:
+    result = df.copy()
+    result.ta.rsi(length=14, append=True)
+    return result.rename(columns={"RSI_14": "rsi_14"})
+
+# WRONG:
+# df.ta.rsi(append=True)  # Mutates original
+```
+
+### `models/regime_classifier.py`
+- Model must output one of exactly 5 labels: `trending_up`, `trending_down`, `ranging`, `volatile`, `crash`
+- Always return confidence score alongside label: `{"regime": "trending_up", "confidence": 0.82}`
+- Model must be retrained at minimum monthly — check `model_metadata.last_trained`
+- Persist model artifacts to `models/artifacts/regime_{version}_{date}.pkl`
+- Minimum out-of-sample accuracy: 70% — raise `ModelValidationError` if below threshold
+
+### `models/tft_model.py`
+- Use `pytorch-forecasting` TFT implementation — do not build from scratch
+- Output quantile predictions: [0.1, 0.5, 0.9] — never a single point estimate
+- Lookback window: 168 hours (7 days of hourly data) minimum
+- Never use closing price as a future known input — only time features and calendar events
+- GPU if `torch.cuda.is_available()`, else CPU with warning logged
+- Inference must complete in < 500ms per asset — profile and optimize if slower
+
+### `models/rl_agent.py`
+- Use `stable-baselines3` PPO algorithm with `gymnasium` environment
+- Action space must be discrete and bounded — no unconstrained continuous actions
+- Reward function must account for trading fees (subtract 0.075% per trade)
+- Penalize the agent for holding too many correlated positions (add correlation penalty to reward)
+- Always normalize observations before passing to the policy network
+- Never let the RL agent override `RiskManager` hard limits — RL suggests, Risk Manager approves
+
+```python
+# Action space definition:
+actions = {
+    0: "hold",
+    1: "buy_5_pct",
+    2: "buy_10_pct",
+    3: "buy_20_pct",
+    4: "sell_25_pct",
+    5: "sell_50_pct",
+    6: "sell_100_pct"
+}
+```
+
+### `risk/risk_manager.py`
+- This is the most critical module. Every function must have full test coverage (100%).
+- `validate_order()` must check ALL of the following before returning `True`:
+  1. Position size ≤ 2% portfolio risk
+  2. Total open positions ≤ 5
+  3. Single asset exposure ≤ 20% of portfolio
+  4. Daily drawdown < 5% (else reject and trigger circuit breaker)
+  5. Correlation with existing positions < 0.85
+  6. Sufficient USDT balance for the order + fees
+  7. Circuit breaker not currently active
+- All limit violations must be logged with full context (what was attempted, what the limits are)
+- Circuit breaker state persists in Redis so it survives restarts
+
+```python
+@dataclass
+class RiskLimits:
+    max_position_risk_pct: float = 0.02      # 2% of portfolio per trade
+    max_open_positions: int = 5
+    max_single_asset_pct: float = 0.20       # 20% max in one asset
+    max_daily_drawdown_pct: float = 0.05     # 5% daily halt
+    max_weekly_drawdown_pct: float = 0.10    # 10% weekly halt
+    max_correlation: float = 0.85
+    min_trade_size_usdt: float = 50.0        # Below this, fees eat returns
+    usdt_reserve_pct: float = 0.20           # Always keep 20% as cash
+```
+
+### `execution/order_manager.py`
+- Orders have a state machine: `PENDING → SUBMITTED → OPEN → PARTIAL_FILL → FILLED / CANCELLED / REJECTED`
+- Every state transition must be logged to the `trades` table
+- Always set stop-loss and take-profit IMMEDIATELY after an order fills — not in a separate step
+- Stop-loss: 1.5× ATR below entry (long) or above entry (short)
+- Take-profit: minimum 2:1 risk/reward ratio
+- Retry failed orders maximum 3 times with 5-second delay — then alert and abandon
+- Never retry a rejected order without human review
+
+### `backtesting/engine.py`
+- Event-driven only — no vectorized backtesting. Price data processes bar-by-bar chronologically.
+- Fee model: 0.075% taker, 0.0% maker (BNB discount applied)
+- Slippage model: 0.05% for large caps (BTC/ETH), 0.15% for altcoins
+- Strict bar isolation: when processing bar N, only data from bars 0 to N-1 is accessible
+- Walk-forward validation requires minimum 10 out-of-sample periods to be statistically valid
+- Minimum bar count per out-of-sample period: 500 (avoids noise)
+
+### `monitoring/telegram_bot.py`
+- Alert severity levels: `INFO`, `WARNING`, `CRITICAL`
+- `CRITICAL` alerts must be sent immediately and include recommended action
+- Rate limit alerts: max 10 per hour per severity to avoid spam
+- All alerts include: timestamp (UTC), affected symbol/module, metric values, previous values
+
+### `pipeline/retrain_pipeline.py`
+- Drift detection runs every 6 hours
+- Retraining triggers when ANY of these conditions are met:
+  - Rolling 30-day Sharpe drops below 1.0 (was above 1.5 at last training)
+  - Feature distribution drift score > 0.3 (Evidently PSI metric)
+  - Model prediction confidence trending down > 20% over 7 days
+- New model must pass backtest before deployment: Sharpe > 1.0, Drawdown < 20%
+- Shadow mode: new model runs alongside old for 48 hours before promotion
+- Version all models: `{model_type}_{version}_{YYYYMMDD}.pkl`
+- Keep last 5 versions, delete older
+
+---
+
+## 📐 Code Style & Patterns
+
+### Type Hints
+All functions must have complete type hints. No `Any` unless absolutely unavoidable.
+
+```python
+# CORRECT:
+async def get_candles(
+    symbol: str,
+    timeframe: str,
+    limit: int = 500
+) -> pd.DataFrame:
+
+# WRONG:
+async def get_candles(symbol, timeframe, limit=500):
+```
+
+### Error Handling Pattern
+```python
+# CORRECT:
+try:
+    result = await binance_client.get_order(symbol=symbol, orderId=order_id)
+except BinanceAPIException as e:
+    logger.error(
+        "binance_api_error",
+        symbol=symbol,
+        order_id=order_id,
+        error_code=e.code,
+        error_message=e.message
+    )
+    raise OrderExecutionError(f"Failed to get order {order_id}: {e.message}") from e
+
+# WRONG:
+try:
+    result = await binance_client.get_order(...)
+except Exception as e:
+    print(f"Error: {e}")  # Never use print in production
+```
+
+### Database Access Pattern
+```python
+# CORRECT — always use connection from pool:
+async def save_candle(candle: Candle, pool: asyncpg.Pool) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute(INSERT_CANDLE_SQL, *candle.values())
+
+# WRONG:
+# Global connection object — not thread/async safe
+```
+
+### Configuration Pattern
+```python
+# CORRECT — all config from environment:
+from config.settings import settings
+
+class BinanceClient:
+    def __init__(self):
+        self.api_key = settings.BINANCE_API_KEY      # From .env
+        self.api_secret = settings.BINANCE_API_SECRET
+
+# WRONG:
+API_KEY = "abc123..."  # NEVER hardcode credentials
+```
+
+### Async Pattern
+```python
+# CORRECT:
+async def fetch_all_symbols(symbols: list[str]) -> dict[str, pd.DataFrame]:
+    tasks = [fetch_candles(sym) for sym in symbols]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    return {sym: res for sym, res in zip(symbols, results) if not isinstance(res, Exception)}
+
+# WRONG:
+for symbol in symbols:
+    data = await fetch_candles(symbol)  # Sequential — too slow
+```
+
+---
+
+## 🗄️ Database Conventions
+
+- All timestamps stored as `TIMESTAMPTZ` in UTC — never naive datetimes
+- Use `gen_random_uuid()` for primary keys on the `trades` table
+- TimescaleDB hypertables for: `candles`, `features`, `signals`, `sentiment`
+- Regular tables for: `trades`, `model_versions`, `portfolio_snapshots`
+- All DB writes use upsert (`ON CONFLICT DO UPDATE`) for idempotency
+- Never use ORM for time-series queries — write raw SQL for performance
+- Index pattern: always index on `(symbol, timeframe, time DESC)` for candle queries
+
+---
+
+## 🧪 Testing Requirements
+
+- Unit tests: all `risk/` and `execution/` modules must have 100% coverage
+- Integration tests: must test actual DB writes and reads (use test DB, not mocks)
+- Backtest fixtures: use the same 3-month fixture dataset for all strategy tests
+- Never mock the `RiskManager` in tests — test the real one
+- CI gate: all tests must pass before merging to `main`
+- Performance test: model inference must complete < 500ms (automated assertion)
+
+```
+tests/
+├── unit/
+│   ├── test_risk_manager.py        # 100% coverage required
+│   ├── test_position_sizer.py      # 100% coverage required
+│   ├── test_order_manager.py       # 100% coverage required
+│   └── test_features.py
+├── integration/
+│   ├── test_data_pipeline.py
+│   ├── test_binance_executor.py    # Uses Binance testnet
+│   └── test_db_storage.py
+└── backtest_fixtures/
+    └── BTC_USDT_2023Q4.parquet    # Fixed fixture, never modify
+```
+
+---
+
+## 🚦 Environment Variables (`.env.example`)
+
+```bash
+# Binance — TRADE ONLY permissions. NO WITHDRAWAL.
+BINANCE_API_KEY=your_api_key_here
+BINANCE_API_SECRET=your_api_secret_here
+BINANCE_TESTNET=false  # Set true for paper trading
+
+# Database
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/trading_bot
+REDIS_URL=redis://localhost:6379/0
+
+# Telegram Alerts
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
+
+# Risk Limits (can override defaults)
+MAX_POSITION_RISK_PCT=0.02
+MAX_OPEN_POSITIONS=5
+MAX_SINGLE_ASSET_PCT=0.20
+MAX_DAILY_DRAWDOWN_PCT=0.05
+USDT_RESERVE_PCT=0.20
+MIN_TRADE_SIZE_USDT=50
+
+# APIs (all have free tiers)
+CRYPTOPANIC_API_KEY=your_key
+GLASSNODE_API_KEY=your_key
+
+# Trading
+INITIAL_BUDGET_USDT=1000
+PAPER_TRADING=true  # ALWAYS start with true
+```
+
+---
+
+## 📦 Docker Services
+
+```yaml
+# docker-compose.yml services:
+services:
+  bot:          # Main trading bot application
+  api:          # FastAPI control interface
+  worker:       # Celery worker for background jobs
+  scheduler:    # Celery beat for periodic tasks
+  timescaledb:  # Time-series database
+  redis:        # Cache + message queue
+  grafana:      # Dashboard
+  prometheus:   # Metrics collection
+```
+
+---
+
+## ⚠️ AI Assistant Guidance for This Project
+
+When helping with this codebase:
+
+1. **Always prioritize capital safety over performance** — a bug in `risk_manager.py` that allows oversized positions is catastrophic. A 1% performance loss is not.
+
+2. **Never suggest removing safety checks** — if existing code has a validation or guard, keep it. Add more guards, never fewer.
+
+3. **For any order execution code**, always verify the flow goes through: `Signal → RiskManager.validate() → OrderManager → BinanceExecutor`. Shortcuts are bugs.
+
+4. **Feature engineering code must be scrutinized for look-ahead bias** — if you see `.shift(-1)` or future timestamps being used as inputs, that's a critical bug.
+
+5. **When suggesting model architecture changes**, always ask: "Can this be validated in backtest before going live?" If not, it doesn't belong in the live system.
+
+6. **Database queries on `candles` table** should always include both `symbol` and `timeframe` in the WHERE clause — full table scans on time-series data are unacceptable.
+
+7. **Any new external API integration** must include: rate limiting, retry logic, circuit breaker (stop calling if API is down), and graceful degradation (bot continues without that signal).
+
+8. **When modifying `RiskManager`**, think about edge cases: What if account balance is $0? What if Binance API returns wrong balance? What if two orders are placed simultaneously and both pass the check?
+
+9. **The bot must never stop running due to an unhandled exception in a non-critical path** — sentiment analysis failing should not stop trade execution. Use `asyncio.gather(*tasks, return_exceptions=True)` patterns.
+
+10. **PAPER_TRADING=true is the default**. If you're helping write any order execution code, verify `settings.PAPER_TRADING` is checked first.
+
+---
+
+## 🗓️ Current Build Phase Tracker
+
+Update this section as phases complete:
+
+- [x] Phase 0: Project setup, Cursor rules, architecture design
+- [ ] Phase 1: Data pipeline + TimescaleDB + WebSocket ingestion
+- [ ] Phase 2: Backtesting engine + walk-forward validation
+- [ ] Phase 3: AI models (Regime + TFT + RL + Sentiment)
+- [ ] Phase 4: Risk engine + Order execution
+- [ ] Phase 5: Monitoring (Grafana + Telegram)
+- [ ] Phase 6: Paper trading (minimum 2 weeks)
+- [ ] Phase 7: Self-driving layer (auto-retrain + meta-learning)
+- [ ] Phase 8: Live deployment (start with 10% budget)
+
+**Current Phase:** Phase 0 — Setup  
+**Last Updated:** 2026-05-18  
+**Paper Trading Since:** Not started  
+**Live Since:** Not started
