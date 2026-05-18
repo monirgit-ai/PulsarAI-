@@ -312,7 +312,7 @@ services:
 
 - [x] Phase 0: Project setup, Cursor rules, architecture design, workflow agreed (laptop → GitHub → server)
 - [x] Phase 1 (Week 1): Docker stack, TimescaleDB schema, FastAPI health, bot health loop, Telegram stub
-- [ ] Phase 1 (Week 2): Historical download + WebSocket ingestion + features
+- [x] Phase 1 (Week 2): Historical download + WebSocket ingestion + features
 - [ ] Phase 2: Backtesting engine + walk-forward validation
 - [ ] Phase 3: AI models (Regime + TFT + RL + Sentiment)
 - [ ] Phase 4: Risk engine + Order execution
@@ -321,7 +321,7 @@ services:
 - [ ] Phase 7: Self-driving layer (auto-retrain + meta-learning)
 - [ ] Phase 8: Live deployment on **server** (start with 10% budget)
 
-**Current Phase:** Phase 1 — Week 2 (data ingestion)  
+**Current Phase:** Phase 2 — Backtesting engine (next)  
 **Dev workflow:** Laptop → GitHub → Ubuntu server  
 **Ports (host):** API 18888, Postgres 15432, Redis 16379, Grafana 13000, Prometheus 19090  
 **Last Updated:** 2026-05-18  

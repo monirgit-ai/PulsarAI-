@@ -55,6 +55,27 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
     bot_health_interval_seconds: int = 60
 
+    # Data ingestion
+    ingestion_enabled: bool = True
+    trading_symbols: str = "BTCUSDT,ETHUSDT,BNBUSDT,SOLUSDT,XRPUSDT"
+    ws_kline_intervals: str = "1m,1h"
+    historical_intervals: str = "1h,4h,1d"
+    historical_days: int = 90
+    top_pairs_count: int = 10
+    binance_rest_delay_seconds: float = 0.2
+
+    @property
+    def ws_kline_interval_list(self) -> list[str]:
+        return [x.strip() for x in self.ws_kline_intervals.split(",") if x.strip()]
+
+    @property
+    def historical_interval_list(self) -> list[str]:
+        return [x.strip() for x in self.historical_intervals.split(",") if x.strip()]
+
+    @property
+    def trading_symbol_list(self) -> list[str]:
+        return [x.strip().upper() for x in self.trading_symbols.split(",") if x.strip()]
+
     @field_validator("telegram_chat_id", mode="before")
     @classmethod
     def strip_chat_id(cls, v: object) -> str:

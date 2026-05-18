@@ -98,6 +98,13 @@ class TelegramNotifier:
                     response.raise_for_status()
                 logger.info("telegram_sent", severity=severity.value, module=module)
                 return True
+            except httpx.HTTPStatusError as exc:
+                logger.error(
+                    "telegram_send_failed",
+                    attempt=attempt + 1,
+                    severity=severity.value,
+                    status_code=exc.response.status_code,
+                )
             except Exception:
                 logger.exception(
                     "telegram_send_failed",

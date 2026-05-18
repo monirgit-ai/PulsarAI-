@@ -3,7 +3,7 @@ name = "pulsarai"
 version = "0.1.0"
 description = "AI self-driving crypto trading bot for Binance"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = []
 
 [tool.pytest.ini_options]

@@ -5,7 +5,8 @@ AI self-driving cryptocurrency trading bot for Binance (spot).
 
 ## Phase 1 (current)
 
-Infrastructure: Docker stack, TimescaleDB schema, FastAPI health API, bot health loop, Telegram alert stub.
+**Week 1:** Docker stack, TimescaleDB, FastAPI, bot health loop, Telegram alerts.  
+**Week 2:** Binance historical download, live WebSocket klines, feature engineering.
 
 ## Quick start (laptop)
 
@@ -41,7 +42,17 @@ Ports are intentionally **non-standard** to avoid conflicts with other projects.
 docker compose -f docker/docker-compose.yml logs -f bot api
 ```
 
-### 5. Tests (local Python)
+### 5. Download history + features
+
+```powershell
+# Inside running stack (7 days quick test)
+docker compose -f docker/docker-compose.yml run --rm api python scripts/download_history.py --days 7 --features
+
+# Or locally with venv + DB on localhost:15432
+python scripts/download_history.py --days 30 --features
+```
+
+### 6. Tests (local Python)
 
 ```powershell
 python -m venv .venv

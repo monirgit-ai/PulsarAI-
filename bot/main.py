@@ -1,4 +1,4 @@
-"""PulsarAI bot entrypoint — Phase 1: health loop + Telegram startup alert."""
+"""PulsarAI bot — health monitoring + live market data ingestion."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ import structlog
 
 from config.logging_config import configure_logging
 from config.settings import settings
+from data.ingestion.binance_ws import run_kline_ingestion
 from data.storage import redis_cache, timescale
 from monitoring.health_check import run_health_check
 from monitoring.telegram_bot import notify_startup, send_alert
@@ -51,15 +52,18 @@ async def run() -> None:
         "bot_starting",
         environment=settings.environment,
         paper_trading=settings.paper_trading,
+        ingestion=settings.ingestion_enabled,
+        symbols=settings.trading_symbol_list,
     )
 
     await notify_startup(settings.environment, settings.paper_trading)
 
-    # Verify connectivity
     status = await run_health_check()
     if status.healthy:
         await send_alert(
-            "Database and Redis connected.",
+            "Database and Redis connected. Starting ingestion..."
+            if settings.ingestion_enabled
+            else "Database and Redis connected.",
             severity="INFO",
             module="bot",
         )
@@ -70,7 +74,18 @@ async def run() -> None:
             module="bot",
         )
 
-    await health_loop()
+    tasks: list[asyncio.Task] = [asyncio.create_task(health_loop(), name="health")]
+
+    if settings.ingestion_enabled:
+        tasks.append(asyncio.create_task(run_kline_ingestion(), name="ingestion"))
+
+    try:
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("task_failed", error=str(result))
+    except asyncio.CancelledError:
+        pass
 
 
 async def main() -> None:
@@ -79,12 +94,12 @@ async def main() -> None:
         try:
             loop.add_signal_handler(sig, _handle_signal)
         except NotImplementedError:
-            # Windows
             pass
 
     try:
         await run()
     finally:
+        _shutdown.set()
         await send_alert("PulsarAI shutting down.", severity="INFO", module="bot")
         await timescale.close_pool()
         await redis_cache.close_redis()

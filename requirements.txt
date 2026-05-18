@@ -15,8 +15,9 @@ aiohttp==3.9.5
 python-dotenv==1.0.1
 
 # Data (Phase 1 week 2+)
-pandas==2.2.2
-numpy==1.26.4
+pandas==2.3.2
+numpy==2.2.6
+pandas-ta==0.4.71b0
 
 # Tests
 pytest==8.2.2
