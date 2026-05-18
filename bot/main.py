@@ -11,7 +11,7 @@ from config.logging_config import configure_logging
 from config.settings import settings
 from data.ingestion.binance_ws import run_kline_ingestion
 from data.storage import redis_cache, timescale
-from monitoring.health_check import run_health_check
+from monitoring.extended_health import run_extended_health_check
 from monitoring.telegram_bot import notify_startup, send_alert
 
 logger = structlog.get_logger(__name__)
@@ -28,7 +28,7 @@ async def health_loop() -> None:
     interval = settings.bot_health_interval_seconds
     while not _shutdown.is_set():
         try:
-            status = await run_health_check()
+            status = await run_extended_health_check()
             if not status.healthy:
                 await send_alert(
                     f"Health check failed.\n{status.details}",
@@ -58,7 +58,7 @@ async def run() -> None:
 
     await notify_startup(settings.environment, settings.paper_trading)
 
-    status = await run_health_check()
+    status = await run_extended_health_check()
     if status.healthy:
         await send_alert(
             "Database and Redis connected. Starting ingestion..."
@@ -75,6 +75,11 @@ async def run() -> None:
         )
 
     tasks: list[asyncio.Task] = [asyncio.create_task(health_loop(), name="health")]
+
+    if settings.telegram_commands_enabled:
+        from monitoring.telegram_commands import run_command_bot
+
+        tasks.append(asyncio.create_task(run_command_bot(), name="telegram_commands"))
 
     if settings.ingestion_enabled:
         tasks.append(asyncio.create_task(run_kline_ingestion(), name="ingestion"))

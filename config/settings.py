@@ -39,6 +39,11 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     telegram_alerts_enabled: bool = False
+    telegram_commands_enabled: bool = False
+
+    metrics_interval_seconds: int = 60
+    drift_check_interval_hours: int = 6
+    daily_summary_hour_utc: int = 0
 
     max_position_risk_pct: float = 0.02
     max_open_positions: int = 5

@@ -316,14 +316,14 @@ services:
 - [x] Phase 2: Backtesting engine + walk-forward validation + HTML reports
 - [x] Phase 3: AI models (Regime + TFT/LSTM + RL + Sentiment + Ensemble)
 - [x] Phase 4: Risk engine + Order execution (paper + live executors, order manager)
-- [ ] Phase 5: Monitoring (Grafana + **full Telegram alerts**)
+- [x] Phase 5: Monitoring (Grafana + Prometheus + full Telegram alerts + scheduler)
 - [ ] Phase 6: Paper trading on **server** (minimum 2 weeks)
 - [ ] Phase 7: Self-driving layer (auto-retrain + meta-learning)
 - [ ] Phase 8: Live deployment on **server** (start with 10% budget)
 
-**Current Phase:** Phase 5 — Monitoring (Grafana dashboards + Telegram polish)  
+**Current Phase:** Phase 6 — Paper trading soak on server (2+ weeks)  
 **Dev workflow:** Laptop → GitHub → Ubuntu server  
 **Ports (host):** API 18888, Postgres 15432, Redis 16379, Grafana 13000, Prometheus 19090  
 **Last Updated:** 2026-05-18  
-**Paper Trading Since:** Script ready (`scripts/paper_trade.py`); server soak not started  
+**Paper Trading Since:** Script ready (`scripts/paper_trade.py`); start server soak in Phase 6  
 **Live Since:** Not started

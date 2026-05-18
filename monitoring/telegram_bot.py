@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 from collections import defaultdict
 from datetime import datetime, timezone
 from enum import Enum
@@ -14,8 +15,14 @@ from config.settings import settings
 
 logger = structlog.get_logger(__name__)
 
-SEVERITY_ORDER = ("INFO", "WARNING", "CRITICAL")
 MAX_ALERTS_PER_HOUR = 10
+
+
+def _authorized_chat(chat_id: str) -> bool:
+    """Only the configured TELEGRAM_CHAT_ID may receive alerts or use commands."""
+    if not settings.telegram_chat_id:
+        return False
+    return str(chat_id).strip() == str(settings.telegram_chat_id).strip()
 
 
 class AlertSeverity(str, Enum):
@@ -67,9 +74,15 @@ class TelegramNotifier:
         module: str | None = None,
         symbol: str | None = None,
         action: str | None = None,
+        chat_id: str | None = None,
     ) -> bool:
         if not settings.telegram_configured:
             logger.debug("telegram_skipped", reason="not_configured")
+            return False
+
+        target_chat = chat_id or settings.telegram_chat_id
+        if not _authorized_chat(target_chat):
+            logger.warning("telegram_chat_rejected", chat_id=target_chat)
             return False
 
         if not self._rate_limit_ok(severity):
@@ -85,7 +98,7 @@ class TelegramNotifier:
         )
         url = f"https://api.telegram.org/bot{settings.telegram_bot_token}/sendMessage"
         payload = {
-            "chat_id": settings.telegram_chat_id,
+            "chat_id": target_chat,
             "text": text,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
@@ -133,13 +146,21 @@ async def send_alert(
         sev = AlertSeverity(severity.upper())
     except ValueError:
         sev = AlertSeverity.INFO
-    return await _notifier.send_alert(
-        message,
-        sev,
-        module=module,
-        symbol=symbol,
-        action=action,
-    )
+    try:
+        return await _notifier.send_alert(
+            message,
+            sev,
+            module=module,
+            symbol=symbol,
+            action=action,
+        )
+    except Exception:
+        logger.exception("telegram_send_alert_failed", module=module)
+        return False
+
+
+def escape_text(value: str) -> str:
+    return html.escape(value)
 
 
 async def notify_startup(environment: str, paper_trading: bool) -> bool:

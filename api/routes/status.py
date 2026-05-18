@@ -47,7 +47,7 @@ async def system_status() -> dict:
     return {
         "service": "PulsarAI",
         "version": "0.1.0",
-        "phase": "1-week2",
+        "phase": "5-monitoring",
         "environment": settings.environment,
         "paper_trading": settings.paper_trading,
         "telegram_configured": settings.telegram_configured,

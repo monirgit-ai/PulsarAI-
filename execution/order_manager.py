@@ -151,20 +151,41 @@ class OrderManager:
                     result.filled_quantity,
                     order_req.stop_loss,
                 )
-        else:
-            await self._close_position_trade(managed, result, portfolio)
+        close_info: tuple[float, float, float] | None = None
+        if order_req.side == OrderSide.SELL:
+            close_info = await self._close_position_trade(managed, result, portfolio)
 
-        from monitoring.telegram_bot import send_alert
+        from monitoring import metrics as prom
+        from monitoring.telegram_alerts import notify_trade_closed, notify_trade_opened, safe_notify
 
-        await send_alert(
-            f"Trade {result.side} {result.symbol}\n"
-            f"Qty: {result.filled_quantity:.6f} @ {result.fill_price:.4f}\n"
-            f"Fee: ${result.fee_usdt:.4f}\n"
-            f"Mode: {'PAPER' if result.is_paper else 'LIVE'}",
-            severity="INFO",
-            module="order_manager",
-            symbol=result.symbol,
-        )
+        prom.TRADES_TOTAL.labels(side=result.side, mode="paper" if result.is_paper else "live").inc()
+        if order_req.side == OrderSide.BUY:
+            await safe_notify(
+                notify_trade_opened(
+                    result.symbol,
+                    result.side,
+                    result.filled_quantity,
+                    result.fill_price,
+                    stop_loss=order_req.stop_loss,
+                    take_profit=order_req.take_profit,
+                    is_paper=result.is_paper,
+                    extra=order_req.signal_metadata,
+                )
+            )
+        elif close_info:
+            entry, pnl, pnl_pct = close_info
+            await safe_notify(
+                notify_trade_closed(
+                    result.symbol,
+                    result.side,
+                    result.filled_quantity,
+                    entry,
+                    result.fill_price,
+                    pnl,
+                    pnl_pct,
+                    is_paper=result.is_paper,
+                )
+            )
 
         return managed
 
@@ -173,11 +194,11 @@ class OrderManager:
         managed: ManagedOrder,
         result,
         portfolio: PortfolioState,
-    ) -> None:
+    ) -> tuple[float, float, float] | None:
         open_trades = await self.trades.list_open_trades()
         match = next((t for t in open_trades if t["symbol"] == result.symbol), None)
         if not match:
-            return
+            return None
         entry = float(match["entry_price"])
         pnl = (result.fill_price - entry) * result.filled_quantity - result.fee_usdt
         pnl_pct = (result.fill_price / entry - 1) * 100 if entry else 0
@@ -188,3 +209,4 @@ class OrderManager:
             pnl_pct,
             result.fee_usdt,
         )
+        return entry, pnl, pnl_pct

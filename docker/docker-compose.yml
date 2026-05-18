@@ -124,8 +124,10 @@ services:
     volumes:
       - pulsarai_grafana:/var/lib/grafana
       - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     depends_on:
       - timescaledb
+      - prometheus
 
   prometheus:
     image: prom/prometheus:v2.52.0
@@ -138,6 +140,31 @@ services:
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  scheduler:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pulsarai-scheduler
+    command: python -m monitoring.scheduler
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://pulsarai:${POSTGRES_PASSWORD:-pulsarai_dev}@timescaledb:5432/pulsarai
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   pulsarai_tsdata:

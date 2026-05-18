@@ -39,14 +39,9 @@ class CircuitBreaker:
         await redis.set(REDIS_KEY_TRIGGERED_AT, datetime.now(timezone.utc).isoformat())
         logger.warning("circuit_breaker_triggered", reason=reason)
 
-        from monitoring.telegram_bot import send_alert
+        from monitoring.telegram_alerts import notify_circuit_breaker
 
-        await send_alert(
-            f"Circuit breaker ACTIVE.\n{reason}",
-            severity="CRITICAL",
-            module="circuit_breaker",
-            action="Trading halted. Manual review required before reset.",
-        )
+        await notify_circuit_breaker(reason)
 
     async def reset(self) -> None:
         redis = await redis_cache.get_redis()

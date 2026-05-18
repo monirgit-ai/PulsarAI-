@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from api.routes import config, status, trades
+from api.routes import config, metrics, status, trades
 from config.logging_config import configure_logging
 from config.settings import settings
 from data.storage import redis_cache, timescale
@@ -28,6 +28,7 @@ app = FastAPI(
 app.include_router(status.router, prefix="/api/v1", tags=["status"])
 app.include_router(trades.router, prefix="/api/v1", tags=["trades"])
 app.include_router(config.router, prefix="/api/v1", tags=["config"])
+app.include_router(metrics.router, tags=["metrics"])
 
 
 @app.get("/")

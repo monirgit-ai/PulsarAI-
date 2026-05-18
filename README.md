@@ -8,7 +8,8 @@ AI self-driving cryptocurrency trading bot for Binance (spot).
 **Phase 1:** Docker stack, TimescaleDB, FastAPI, bot health, Telegram alerts, Binance ingestion.  
 **Phase 2:** Event-driven backtesting, walk-forward validation, HTML reports.  
 **Phase 3:** Regime (LightGBM), sentiment (FinBERT), TFT/LSTM forecaster, RL (PPO), ensemble signals.  
-**Phase 4:** Risk manager, circuit breaker, position sizing, paper/live execution, order manager.
+**Phase 4:** Risk manager, circuit breaker, position sizing, paper/live execution, order manager.  
+**Phase 5:** Prometheus metrics, Grafana dashboards, full Telegram alerts, scheduler, drift detection.
 
 ## Quick start (laptop)
 
@@ -93,7 +94,25 @@ docker compose -f docker/docker-compose.yml run --rm api python scripts/paper_tr
 
 Flow: ensemble signal → `RiskManager.validate()` → paper fill → `trades` table.
 
-### 9. Tests (local Python)
+### 9. Monitoring (Phase 5)
+
+| Service | URL |
+|---------|-----|
+| Grafana dashboards | http://localhost:13000 (login: see `.env` `GF_SECURITY_*`) |
+| Prometheus | http://localhost:19090 |
+| Metrics | http://localhost:18888/metrics |
+
+The `scheduler` service refreshes portfolio metrics, runs drift checks, and sends the daily P&L summary at 00:00 UTC.
+
+**Telegram commands** (optional, whitelist your chat ID):
+
+```env
+TELEGRAM_COMMANDS_ENABLED=true
+```
+
+Then message your bot: `/status`, `/positions`, `/pnl`
+
+### 10. Tests (local Python)
 
 ```powershell
 python -m venv .venv
