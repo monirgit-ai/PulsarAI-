@@ -3,12 +3,12 @@
 AI self-driving cryptocurrency trading bot for Binance (spot).  
 **Dev workflow:** Laptop (Docker Desktop) → GitHub → Ubuntu server.
 
-## Phase 1 (current)
+## Build status
 
-**Week 1:** Docker stack, TimescaleDB, FastAPI, bot health loop, Telegram alerts.  
-**Week 2:** Binance historical download, live WebSocket klines, feature engineering.  
+**Phase 1:** Docker stack, TimescaleDB, FastAPI, bot health, Telegram alerts, Binance ingestion.  
 **Phase 2:** Event-driven backtesting, walk-forward validation, HTML reports.  
-**Phase 3:** Regime (LightGBM), sentiment (FinBERT), TFT/LSTM forecaster, RL (PPO), ensemble signals.
+**Phase 3:** Regime (LightGBM), sentiment (FinBERT), TFT/LSTM forecaster, RL (PPO), ensemble signals.  
+**Phase 4:** Risk manager, circuit breaker, position sizing, paper/live execution, order manager.
 
 ## Quick start (laptop)
 
@@ -83,7 +83,17 @@ docker compose -f docker/docker-compose.yml run --rm api python scripts/predict_
 
 Artifacts saved under `models/artifacts/` (gitignored).
 
-### 8. Tests (local Python)
+### 8. Paper trade one cycle (Phase 4)
+
+Requires trained models and `PAPER_TRADING=true` in `.env`.
+
+```powershell
+docker compose -f docker/docker-compose.yml run --rm api python scripts/paper_trade.py --symbol BTCUSDT
+```
+
+Flow: ensemble signal → `RiskManager.validate()` → paper fill → `trades` table.
+
+### 9. Tests (local Python)
 
 ```powershell
 python -m venv .venv
