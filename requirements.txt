@@ -19,6 +19,9 @@ pandas==2.3.2
 numpy==2.2.6
 pandas-ta==0.4.71b0
 
+# Backtesting reports
+matplotlib==3.9.2
+
 # Tests
 pytest==8.2.2
 pytest-asyncio==0.23.7

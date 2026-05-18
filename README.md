@@ -6,7 +6,8 @@ AI self-driving cryptocurrency trading bot for Binance (spot).
 ## Phase 1 (current)
 
 **Week 1:** Docker stack, TimescaleDB, FastAPI, bot health loop, Telegram alerts.  
-**Week 2:** Binance historical download, live WebSocket klines, feature engineering.
+**Week 2:** Binance historical download, live WebSocket klines, feature engineering.  
+**Phase 2:** Event-driven backtesting, walk-forward validation, HTML reports.
 
 ## Quick start (laptop)
 
@@ -52,7 +53,19 @@ docker compose -f docker/docker-compose.yml run --rm api python scripts/download
 python scripts/download_history.py --days 30 --features
 ```
 
-### 6. Tests (local Python)
+### 6. Run backtest
+
+```powershell
+# Single backtest (uses DB candles)
+docker compose -f docker/docker-compose.yml run --rm api python scripts/run_backtest.py --symbol BTCUSDT --timeframe 1h
+
+# Walk-forward validation (needs ~12+ months of 1h data for 10 OOS periods)
+docker compose -f docker/docker-compose.yml run --rm api python scripts/run_backtest.py --symbol BTCUSDT --walk-forward
+
+# Reports saved to reports/ (HTML with equity and drawdown charts)
+```
+
+### 7. Tests (local Python)
 
 ```powershell
 python -m venv .venv
