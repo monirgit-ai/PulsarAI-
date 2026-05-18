@@ -1,0 +1,146 @@
+# PulsarAI — base compose (laptop + server)
+# Ports chosen to avoid common conflicts (8000, 5432, 6379, 3000, etc.)
+#
+# Usage from repo root:
+#   docker compose -f docker/docker-compose.yml up -d --build
+#
+# API:      http://localhost:18888/docs
+# Grafana:  http://localhost:13000
+# Postgres: localhost:15432
+# Redis:    localhost:16379
+
+name: pulsarai
+
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg16
+    container_name: pulsarai-timescaledb
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-pulsarai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pulsarai_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-pulsarai}
+    ports:
+      - "${POSTGRES_PORT:-15432}:5432"
+    volumes:
+      - pulsarai_tsdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pulsarai} -d ${POSTGRES_DB:-pulsarai}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: pulsarai-redis
+    ports:
+      - "${REDIS_PORT:-16379}:6379"
+    volumes:
+      - pulsarai_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pulsarai-migrate
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for TimescaleDB..."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+          alembic upgrade head && exit 0
+          echo "Retry $$i/10..."
+          sleep 3
+        done
+        exit 1
+    environment:
+      DATABASE_URL: postgresql://pulsarai:${POSTGRES_PASSWORD:-pulsarai_dev}@timescaledb:5432/pulsarai
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pulsarai-api
+    command: uvicorn api.main:app --host 0.0.0.0 --port 18888
+    ports:
+      - "${API_PORT:-18888}:18888"
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://pulsarai:${POSTGRES_PASSWORD:-pulsarai_dev}@timescaledb:5432/pulsarai
+      REDIS_URL: redis://redis:6379/0
+      API_PORT: "18888"
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18888/api/v1/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  bot:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: pulsarai-bot
+    command: python -m bot.main
+    env_file:
+      - ../.env
+    environment:
+      DATABASE_URL: postgresql://pulsarai:${POSTGRES_PASSWORD:-pulsarai_dev}@timescaledb:5432/pulsarai
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.0.0
+    container_name: pulsarai-grafana
+    ports:
+      - "${GRAFANA_PORT:-13000}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GF_SECURITY_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GF_SECURITY_ADMIN_PASSWORD:-change_me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - pulsarai_grafana:/var/lib/grafana
+      - ../monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    depends_on:
+      - timescaledb
+
+  prometheus:
+    image: prom/prometheus:v2.52.0
+    container_name: pulsarai-prometheus
+    ports:
+      - "${PROMETHEUS_PORT:-19090}:9090"
+    volumes:
+      - ../monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - pulsarai_prometheus:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+
+volumes:
+  pulsarai_tsdata:
+  pulsarai_redis:
+  pulsarai_grafana:
+  pulsarai_prometheus:

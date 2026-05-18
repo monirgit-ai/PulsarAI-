@@ -1,0 +1,15 @@
+.env
+.env.*
+!.env.example
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.git/
+.idea/
+.vscode/
+data/raw/
+models/artifacts/
+*.md
+!README.md

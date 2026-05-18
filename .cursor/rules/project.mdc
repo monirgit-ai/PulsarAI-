@@ -1,0 +1,329 @@
+---
+description: PulsarAI — AI Self-Driving Crypto Trading Bot — Cursor Project Rules
+globs: ["**/*.py", "**/*.sql", "**/*.yaml", "**/*.yml", "**/*.toml", "**/*.env*", "**/*.md"]
+alwaysApply: true
+---
+
+# 🤖 PulsarAI — Project Context & Rules
+
+## Project Overview
+
+**PulsarAI** is a **production-grade, self-driving AI cryptocurrency trading bot** for the Binance exchange. It uses a multi-layer AI decision engine (Market Regime Classifier + Temporal Fusion Transformer + RL Agent + Sentiment Analysis) to autonomously select assets, size positions, manage risk, and execute trades. The bot manages a USDT budget of $500–$5,000 and trades spot pairs on Binance.
+
+**This is real-money software. Every line of code has financial consequences.**
+
+---
+
+## 🔄 Development & Deployment Workflow
+
+```
+Laptop (Cursor + Docker Desktop)  →  GitHub  →  Ubuntu server
+```
+
+| Environment | Where | Purpose |
+|-------------|--------|---------|
+| **Local dev** | Windows laptop + Docker Desktop | Code, unit tests, local stack, short WS tests |
+| **GitHub** | Remote | Source of truth; `main` / `develop` / `feature/*` |
+| **Server staging** | Ubuntu VPS | 24/7 ingest, paper trading, Grafana |
+| **Server production** | Same VPS (later) | Live trading after Phase 6 gates |
+
+**Rules:**
+- **Develop on the laptop** — do not use the server as the primary IDE.
+- **Commit and push** feature work to GitHub; merge to `main` only when tested.
+- **Deploy on server:** `git pull` + `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+- **Secrets:** `.env` on laptop and server only — never commit. Binance keys: **trade-only**, **no withdrawal**, **IP whitelist = server IP** for production.
+- **Paper trading on server** for Phase 6 (2+ weeks minimum) — laptop sleep breaks 24/7 runs.
+
+---
+
+## 🧰 Tech Stack
+
+| Layer | Stack |
+|--------|--------|
+| Backend | Python 3.11, FastAPI, Celery |
+| Database | TimescaleDB (PostgreSQL), Redis |
+| ML | PyTorch, LightGBM, Stable-Baselines3, transformers (FinBERT) |
+| Exchange | python-binance (async) |
+| Ops UI (web) | Grafana + Prometheus |
+| Mobile / alerts | Telegram (`python-telegram-bot`, async) |
+| API / control | FastAPI (`api/`) — not the trading hot path |
+| Containers | Docker Compose (laptop + server) |
+
+**No React/Next.js frontend in v1.** User surfaces: **Grafana** (browser), **Telegram** (phone), **FastAPI** (admin/scripts).
+
+---
+
+## 🏗️ Architecture Overview
+
+```
+data/ingestion/       → WebSocket + REST data collection (Binance, CoinGecko, news)
+data/processing/      → Feature engineering (50+ TA indicators, NLP sentiment)
+data/storage/         → TimescaleDB (persistence) + Redis (real-time cache)
+models/               → Regime classifier (LightGBM), TFT, RL agent, FinBERT sentiment
+strategy/             → Universe selection, signal aggregation, portfolio optimization
+risk/                 → Risk manager, position sizer, circuit breakers
+execution/            → Order manager, Binance executor, fee optimizer
+monitoring/           → Grafana, Telegram alerts, performance tracking
+backtesting/          → Event-driven engine, walk-forward validation
+pipeline/             → Auto-retraining, drift detection, meta-learning
+api/                  → FastAPI control interface
+```
+
+**Trading path:** `Signal → RiskManager.validate() → OrderManager → BinanceExecutor` (or paper mock).
+
+---
+
+## 🛑 Critical Rules — Never Violate
+
+### Financial Safety
+- **NEVER place a real order without passing through `RiskManager.validate()`** — this is the single gate that prevents catastrophic losses
+- **NEVER hardcode API keys, secrets, or credentials** — always use `config/settings.py` which reads from environment variables only
+- **NEVER allow withdrawal permissions on the Binance API key** — trade-only permissions only
+- **NEVER skip the backtesting gate** — no strategy or model goes live without passing `backtesting/walk_forward.py` validation
+- **NEVER trade more than 2% of total portfolio value on a single position** — this is enforced in `risk/risk_manager.py`
+- **NEVER deploy 100% of budget** — always keep 20% as USDT reserve
+
+### Development & Deploy
+- **NEVER commit `.env`** or any file containing API keys or `TELEGRAM_BOT_TOKEN`
+- **NEVER develop primarily on the production server** — server is for run/deploy/ops
+- **NEVER enable live trading on the laptop** — production runs on Ubuntu server only
+
+### Code Quality
+- **NEVER use synchronous code in the data ingestion layer** — everything must be `async/await` using `asyncio`
+- **NEVER catch bare `Exception` without logging the full stack trace and context**
+- **NEVER store state in global variables** — use dependency injection or the database
+- **NEVER mutate a DataFrame in-place** — always use `df.copy()` or return new DataFrames
+- **NEVER use `time.sleep()` in async code** — use `asyncio.sleep()`
+
+### Data Integrity
+- **NEVER use future data in feature calculation** — this causes look-ahead bias and invalidates all backtesting
+- **NEVER write to the `candles` table without the upsert conflict handler** — duplicate timestamps will corrupt the dataset
+- **NEVER assume WebSocket data is continuous** — always check for gaps before calculating indicators
+
+### Telegram & Monitoring
+- **NEVER let Telegram failures stop trading** — log and continue
+- **NEVER let trading failures block Telegram** — alert send is best-effort with retries
+- **NEVER expose trade/control commands to unauthenticated chats** — whitelist `TELEGRAM_CHAT_ID` only
+
+---
+
+## 🧱 Module-by-Module Rules
+
+### `data/ingestion/binance_ws.py`
+- Use `python-binance` v1.x async client only — the old `BinanceSocketManager` is deprecated
+- Implement exponential backoff for reconnections: `2^attempt` seconds, max 60s
+- Log every disconnect and reconnect event with timestamp and reason
+- Validate every incoming message has required fields before writing to DB
+- Subscribe to streams: `{symbol}@kline_{interval}`, `{symbol}@trade`, `{symbol}@depth20`
+- Always subscribe to multiple symbols in a single multiplex connection (not individual connections)
+- On disconnect/reconnect: notify via `monitoring/telegram_bot.py` (INFO severity)
+
+```python
+# CORRECT pattern:
+async def create_socket_manager():
+    client = await AsyncClient.create(api_key, api_secret)
+    bsm = BinanceSocketManager(client)
+    streams = [f"{sym.lower()}@kline_1h" for sym in SYMBOLS]
+    return bsm.multiplex_socket(streams)
+
+# WRONG — never do this:
+# BinanceSocketManager(client).start_trade_socket(...)  # Old deprecated API
+```
+
+### `data/processing/features.py`
+- Use `pandas-ta` for all technical indicators — not TA-Lib (installation issues in Docker)
+- Calculate features on a copy of the DataFrame, never the original
+- All indicators must be calculated per (symbol, timeframe) combination
+- Multi-timeframe features: align 15m, 1h, 4h features to the same UTC timestamp using `pd.merge_asof`
+- Mark any row where features have NaN values — don't fill with zeros (this creates false signals)
+- Feature names must follow pattern: `{indicator}_{period}_{timeframe}` e.g. `rsi_14_1h`
+
+### `models/regime_classifier.py`
+- Model: **LightGBM** (not XGBoost) — fast, interpretable
+- Model must output one of exactly 5 labels: `trending_up`, `trending_down`, `ranging`, `volatile`, `crash`
+- Always return confidence score alongside label: `{"regime": "trending_up", "confidence": 0.82}`
+- Model must be retrained at minimum monthly — check `model_metadata.last_trained`
+- Persist model artifacts to `models/artifacts/regime_{version}_{date}.pkl`
+- Minimum out-of-sample accuracy: 70% — raise `ModelValidationError` if below threshold
+
+### `models/tft_model.py`
+- Use `pytorch-forecasting` TFT implementation — do not build from scratch
+- Output quantile predictions: [0.1, 0.5, 0.9] — never a single point estimate
+- Lookback window: 168 hours (7 days of hourly data) minimum
+- Never use closing price as a future known input — only time features and calendar events
+- GPU if `torch.cuda.is_available()`, else CPU with warning logged
+- Inference must complete in < 500ms per asset — profile and optimize if slower
+
+### `models/rl_agent.py`
+- Use `stable-baselines3` PPO algorithm with `gymnasium` environment
+- Action space must be discrete and bounded — no unconstrained continuous actions
+- Reward function must account for trading fees (subtract 0.075% per trade)
+- Never let the RL agent override `RiskManager` hard limits — RL suggests, Risk Manager approves
+
+### `risk/risk_manager.py`
+- This is the most critical module. Every function must have full test coverage (100%).
+- `validate_order()` must check ALL limits before returning `True` (see plan for full list)
+- Circuit breaker state persists in Redis so it survives restarts
+- On circuit breaker trigger: send Telegram **CRITICAL** alert immediately
+
+### `execution/order_manager.py`
+- Orders have a state machine: `PENDING → SUBMITTED → OPEN → PARTIAL_FILL → FILLED / CANCELLED / REJECTED`
+- Every state transition must be logged to the `trades` table
+- On fill: Telegram trade alert (INFO) with symbol, side, size, price
+- Always set stop-loss and take-profit IMMEDIATELY after an order fills
+- Check `settings.PAPER_TRADING` before any real Binance order
+
+### `backtesting/engine.py`
+- Event-driven only — primary validation gate; `vectorbt` is research-only if used at all
+- Fee model: 0.075% taker; slippage 0.05% large caps, 0.15% altcoins
+- Strict bar isolation — no look-ahead
+
+### `monitoring/telegram_bot.py`
+- Library: `python-telegram-bot` v21+ (async `Application` / `Bot` API)
+- Config: `settings.TELEGRAM_BOT_TOKEN`, `settings.TELEGRAM_CHAT_ID` from `.env` only
+- **Phase 1 stub:** `send_alert(message, severity="INFO")` — startup, WS up/down, health failures
+- **Phase 5 full:** trades, stops, circuit breaker, drift, errors, daily P&L summary (00:00 UTC)
+- Severity: `INFO`, `WARNING`, `CRITICAL` — max 10 messages/hour per severity
+- `CRITICAL` must include recommended human action
+- All messages: UTC timestamp, module/symbol, relevant metrics
+- Retry failed sends (3×, exponential backoff); then log — never raise into trading loop
+- Optional commands (`/status`, `/positions`, `/pnl`): read-only, reject if `chat_id != TELEGRAM_CHAT_ID`
+- Use HTML or plain text consistently; escape user-controlled strings
+
+```python
+# CORRECT — fire-and-forget from trading path:
+async def notify_trade_opened(trade: Trade) -> None:
+    try:
+        await telegram.send_alert(format_trade(trade), severity="INFO")
+    except Exception:
+        logger.exception("telegram_send_failed", trade_id=str(trade.id))
+
+# WRONG — blocking trading on Telegram:
+# await telegram.send_alert(...)  # if this raises uncaught, order flow breaks
+```
+
+### `monitoring/grafana/`
+- Dashboard JSON under version control
+- Do not expose Grafana publicly without auth/VPN/reverse proxy
+
+### `api/main.py`
+- FastAPI for health, status, trades read, config — not the main trading loop
+- Protect mutating routes in production (API key or localhost only)
+
+### `pipeline/retrain_pipeline.py`
+- Drift detection every 6 hours; Telegram alert on retrain trigger and promotion
+
+---
+
+## 📐 Code Style & Patterns
+
+(Same as before: type hints, structured errors, asyncpg pool, pydantic settings, asyncio.gather for parallel fetches.)
+
+---
+
+## 🗄️ Database Conventions
+
+- All timestamps: `TIMESTAMPTZ` UTC
+- Hypertables: `candles`, `features`, `signals`, `sentiment`
+- Upserts on time-series writes; index `(symbol, timeframe, time DESC)`
+
+---
+
+## 🧪 Testing Requirements
+
+- 100% coverage: `risk/`, `execution/`
+- Integration tests against test DB
+- `test_telegram_bot.py`: mock HTTP API; verify rate limits and chat_id whitelist
+- Never mock `RiskManager` in risk tests
+
+---
+
+## 🚦 Environment Variables (`.env.example`)
+
+```bash
+# Binance — TRADE ONLY. NO WITHDRAWAL.
+BINANCE_API_KEY=your_api_key_here
+BINANCE_API_SECRET=your_api_secret_here
+BINANCE_TESTNET=false
+
+# Database
+DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/pulsarai
+REDIS_URL=redis://localhost:6379/0
+
+# Telegram (create via @BotFather — see AI_Trading_Bot_Project_Plan.md)
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGHI...
+TELEGRAM_CHAT_ID=your_numeric_chat_id
+TELEGRAM_ALERTS_ENABLED=true
+
+# Risk Limits
+MAX_POSITION_RISK_PCT=0.02
+MAX_OPEN_POSITIONS=5
+MAX_SINGLE_ASSET_PCT=0.20
+MAX_DAILY_DRAWDOWN_PCT=0.05
+USDT_RESERVE_PCT=0.20
+MIN_TRADE_SIZE_USDT=50
+
+# APIs (free tiers)
+CRYPTOPANIC_API_KEY=your_key
+GLASSNODE_API_KEY=your_key
+
+# Trading
+INITIAL_BUDGET_USDT=1000
+PAPER_TRADING=true   # ALWAYS true on laptop; true on server until Phase 8
+ENVIRONMENT=development  # development | staging | production
+```
+
+---
+
+## 📦 Docker Services
+
+```yaml
+# docker-compose.yml — laptop and server (base)
+services:
+  bot:          # Main trading bot
+  api:          # FastAPI
+  worker:       # Celery worker
+  scheduler:    # Celery beat (daily Telegram summary, retrain checks)
+  timescaledb:
+  redis:
+  grafana:
+  prometheus:
+
+# docker-compose.prod.yml — server overrides only
+```
+
+- Laptop: `docker compose up`
+- Server: `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d`
+
+---
+
+## ⚠️ AI Assistant Guidance
+
+1. **Capital safety > performance**
+2. **Laptop dev → GitHub → server deploy** — scaffold Docker and Telegram stub in Phase 1
+3. **Telegram is notifications only** — not the execution engine
+4. **No look-ahead bias** in features
+5. **PAPER_TRADING=true by default** on all new execution code
+6. **Grafana for charts, Telegram for mobile** — do not add a React SPA unless explicitly requested
+
+---
+
+## 🗓️ Current Build Phase Tracker
+
+- [x] Phase 0: Project setup, Cursor rules, architecture design, workflow agreed (laptop → GitHub → server)
+- [x] Phase 1 (Week 1): Docker stack, TimescaleDB schema, FastAPI health, bot health loop, Telegram stub
+- [ ] Phase 1 (Week 2): Historical download + WebSocket ingestion + features
+- [ ] Phase 2: Backtesting engine + walk-forward validation
+- [ ] Phase 3: AI models (Regime + TFT + RL + Sentiment)
+- [ ] Phase 4: Risk engine + Order execution
+- [ ] Phase 5: Monitoring (Grafana + **full Telegram alerts**)
+- [ ] Phase 6: Paper trading on **server** (minimum 2 weeks)
+- [ ] Phase 7: Self-driving layer (auto-retrain + meta-learning)
+- [ ] Phase 8: Live deployment on **server** (start with 10% budget)
+
+**Current Phase:** Phase 1 — Week 2 (data ingestion)  
+**Dev workflow:** Laptop → GitHub → Ubuntu server  
+**Ports (host):** API 18888, Postgres 15432, Redis 16379, Grafana 13000, Prometheus 19090  
+**Last Updated:** 2026-05-18  
+**Paper Trading Since:** Not started  
+**Live Since:** Not started

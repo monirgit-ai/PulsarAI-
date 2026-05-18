@@ -1,0 +1,23 @@
+# Core
+python-binance==1.0.19
+fastapi==0.111.0
+uvicorn[standard]==0.30.0
+redis==5.0.4
+asyncpg==0.29.0
+alembic==1.13.0
+sqlalchemy==2.0.30
+psycopg2-binary==2.9.9
+pydantic-settings==2.3.0
+structlog==24.2.0
+python-telegram-bot==21.3
+httpx==0.27.0
+aiohttp==3.9.5
+python-dotenv==1.0.1
+
+# Data (Phase 1 week 2+)
+pandas==2.2.2
+numpy==1.26.4
+
+# Tests
+pytest==8.2.2
+pytest-asyncio==0.23.7

@@ -1,0 +1,21 @@
+# Server overrides — use with:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.prod.yml up -d --build
+
+services:
+  bot:
+    restart: always
+
+  api:
+    restart: always
+
+  timescaledb:
+    restart: always
+
+  redis:
+    restart: always
+
+  grafana:
+    restart: always
+
+  prometheus:
+    restart: always

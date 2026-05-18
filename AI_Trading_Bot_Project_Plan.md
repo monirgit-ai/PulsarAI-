@@ -1,16 +1,77 @@
-# 🤖 AI Self-Driving Crypto Trading Bot — Full Project Plan
+# 🤖 PulsarAI — AI Self-Driving Crypto Trading Bot — Full Project Plan
 
+> **Project:** PulsarAI  
 > **Budget:** $500–$5,000 USDT  
-> **Exchange:** Binance  
+> **Exchange:** Binance (spot)  
 > **Style:** Mixed / AI-decided  
-> **Stack:** Python 3.11, PyTorch, FastAPI, TimescaleDB, Redis, Docker
+> **Dev workflow:** Laptop (Docker Desktop) → GitHub → Ubuntu server (staging → production)
+
+---
+
+## 🧰 Tech Stack
+
+| Layer | Technology | Purpose |
+|--------|------------|---------|
+| **Backend (core)** | Python 3.11 | Trading logic, data pipeline, ML, risk, execution |
+| **API** | FastAPI + Uvicorn | Health, status, trades, config (admin/control) |
+| **Background jobs** | Celery + Redis (broker) | Retraining, reports, scheduled tasks |
+| **Primary database** | TimescaleDB (PostgreSQL) | Candles, features, signals, trades, sentiment |
+| **Cache / realtime** | Redis | Live prices, circuit breaker state, sentiment TTL |
+| **ML** | PyTorch, LightGBM, Stable-Baselines3, transformers (FinBERT) | Regime, TFT, RL, sentiment |
+| **Exchange** | python-binance (async) | Market data + orders |
+| **Ops UI (web)** | Grafana (+ Prometheus) | P&L, drawdown, positions, WS health — browser on server |
+| **Mobile / alerts** | Telegram Bot API (`python-telegram-bot`) | Trade alerts, circuit breakers, daily summary, optional status commands |
+| **Containers** | Docker + Docker Compose | Same images on laptop and Ubuntu server |
+| **Migrations** | Alembic | DB schema versioning |
+| **Config** | pydantic-settings + `.env` | Secrets and risk limits (never committed) |
+| **Logging** | structlog | Structured logs for server debugging |
+| **Tests** | pytest, pytest-asyncio | Unit + integration; 100% coverage on `risk/` and `execution/` |
+
+**No separate React/Next.js frontend in v1.** User-facing surfaces are **Grafana** (dashboards), **Telegram** (phone), and **FastAPI** (`/docs` + control routes). A custom web UI is optional post–Phase 5.
+
+**Backtesting:** Primary engine is **event-driven** (`backtesting/engine.py`). `vectorbt` is optional for offline research only — not the live validation gate.
+
+---
+
+## 🔄 Development & Deployment Workflow
+
+```
+Laptop (Cursor + Docker Desktop)  →  GitHub  →  Ubuntu server
+     develop & test locally            commit/push      staging (paper) → production (live)
+```
+
+| Environment | Where | `PAPER_TRADING` | Notes |
+|-------------|--------|-----------------|--------|
+| **Local dev** | Windows laptop + Docker Desktop | `true` | Fast iteration, unit tests, sample backtests |
+| **Server staging** | Ubuntu VPS | `true` | 24/7 WebSocket, DB, paper trading (Phase 6) |
+| **Server production** | Same VPS (later) | `false` | Trade-only API key, IP whitelist = server IP, start at 10% budget |
+
+**Rules:**
+- **Do not develop primarily on the server** — use SSH for deploy, logs, and ops only.
+- **GitHub is the source of truth** — branches: `main` (deployable), `develop` (integration), `feature/*` (work).
+- **Secrets** live only in `.env` on laptop and server — never in git.
+- **Deploy on server:** `git pull` + `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+- Tag releases (e.g. `v0.1.0-phase1`) so the server runs a known version.
+
+---
+
+## 📱 Telegram Bot Setup (one-time)
+
+Telegram is the **notification channel** (and light status), not the trading engine. Trading failures must not depend on Telegram; Telegram failures must not stop trading.
+
+1. Open Telegram → **@BotFather** → `/newbot` → save **bot token** → `TELEGRAM_BOT_TOKEN`
+2. Start chat with your bot → send a message → open `https://api.telegram.org/bot<TOKEN>/getUpdates` → copy **chat id** → `TELEGRAM_CHAT_ID`
+3. Optional: create a private group, add the bot, use group chat id (often negative) for team alerts
+4. Implement `monitoring/telegram_bot.py` — only accept messages from `TELEGRAM_CHAT_ID` if commands are added later
+5. **Phase 1 stub:** send “PulsarAI started” and “WebSocket connected/disconnected” so server ops are visible from day one
+6. **Phase 5 full alerts:** trades, stops, circuit breaker, drift, errors, daily P&L at 00:00 UTC
 
 ---
 
 ## 📁 Project Structure
 
 ```
-crypto-trading-bot/
+PulsarAI-/
 ├── .cursor/
 │   └── rules/
 │       └── project.mdc           # Cursor AI rules
@@ -32,7 +93,7 @@ crypto-trading-bot/
 │       ├── timescale.py          # TimescaleDB write/read
 │       └── redis_cache.py        # Real-time cache
 ├── models/
-│   ├── regime_classifier.py      # XGBoost market regime
+│   ├── regime_classifier.py      # LightGBM market regime
 │   ├── tft_model.py              # Temporal Fusion Transformer
 │   ├── rl_agent.py               # Stable-Baselines3 RL
 │   ├── sentiment_model.py        # FinBERT pipeline
@@ -51,8 +112,8 @@ crypto-trading-bot/
 │   ├── binance_executor.py       # Binance API calls
 │   └── fee_optimizer.py          # Minimize trading costs
 ├── monitoring/
-│   ├── dashboard/                # Grafana configs
-│   ├── telegram_bot.py           # Alerts
+│   ├── grafana/                  # Dashboard JSON + provisioning
+│   ├── telegram_bot.py           # Alerts + optional /status commands
 │   ├── performance_tracker.py    # P&L, Sharpe, drawdown
 │   └── health_check.py
 ├── backtesting/
@@ -77,11 +138,17 @@ crypto-trading-bot/
 ├── scripts/
 │   ├── setup_db.py
 │   ├── download_history.py
-│   └── paper_trade.py
+│   ├── paper_trade.py
+│   └── deploy.sh                 # Server: git pull + compose up
 ├── docker/
 │   ├── Dockerfile
-│   ├── docker-compose.yml
-│   └── docker-compose.prod.yml
+│   ├── docker-compose.yml        # Base (laptop + server)
+│   ├── docker-compose.override.yml  # Local dev overrides (optional, gitignored patterns)
+│   └── docker-compose.prod.yml   # Server: resources, no dev mounts
+├── .github/
+│   └── workflows/
+│       └── ci.yml                # pytest on push (optional Phase 1+)
+├── .gitignore
 ├── .env.example
 ├── requirements.txt
 ├── pyproject.toml
@@ -101,12 +168,16 @@ crypto-trading-bot/
 #### Week 1 — Infrastructure Setup
 
 **Day 1–2: Environment**
-- [ ] Create GitHub repo, set up branch strategy (`main`, `develop`, `feature/*`)
-- [ ] Set up `.env` file with all secrets (never committed)
-- [ ] Create `docker-compose.yml` with: TimescaleDB, Redis, Grafana, the bot app
+- [ ] GitHub repo + branch strategy (`main`, `develop`, `feature/*`) + `.gitignore` (`.env`, `models/artifacts/`, `data/raw/`, `.venv/`)
+- [ ] Laptop: Docker Desktop — `docker compose up` smoke test
+- [ ] Set up `.env` from `.env.example` on laptop (never committed); copy to server when deploying
+- [ ] **Telegram:** create bot via @BotFather, set `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID`, verify with test message
+- [ ] Create `docker-compose.yml` with: TimescaleDB, Redis, Grafana, bot, api (Celery worker/beat when needed)
+- [ ] Add `docker-compose.prod.yml` for Ubuntu server (same services, production-oriented)
 - [ ] Write `config/settings.py` using `pydantic-settings` — all config from env vars
 - [ ] Set up structured logging with `structlog`
 - [ ] Create DB schema and run migrations with `alembic`
+- [ ] **Telegram stub:** `monitoring/telegram_bot.py` — send startup/health messages; failures logged only, do not crash bot
 
 **Database Schema:**
 ```sql
@@ -186,6 +257,7 @@ CREATE TABLE sentiment (
 - [ ] Subscribe to: trade streams, kline streams, depth streams (order book)
 - [ ] Write incoming data to Redis (real-time) and TimescaleDB (persistence)
 - [ ] Health check endpoint to confirm streams are alive
+- [ ] Telegram alert on WebSocket disconnect/reconnect
 
 #### Week 2 — Feature Engineering
 
@@ -199,7 +271,9 @@ CREATE TABLE sentiment (
 - [ ] Feature store: precompute and cache features for fast model inference
 - [ ] Write comprehensive tests for all feature calculations
 
-**Deliverable:** Database with 2 years of clean OHLCV + features, live WebSocket running, all tests green.
+**Deliverable:** Database with 2 years of clean OHLCV + features, live WebSocket running, Telegram health alerts working, all tests green.
+
+**Server checkpoint (end of Phase 1):** push to GitHub → on Ubuntu server `git pull` + `docker compose ... up -d` → confirm DB ingest + Telegram ping from server.
 
 ---
 
@@ -323,7 +397,9 @@ final_signal = (
 **Duration:** Week 8  
 **Goal:** Full observability, never flying blind.
 
-- [ ] Grafana dashboard panels:
+**Grafana (web UI on server):**
+- [ ] Provision dashboards under `monitoring/grafana/`
+- [ ] Panels:
   - Live P&L (realized + unrealized)
   - Open positions with entry/current price/stop/target
   - Win rate and Sharpe (rolling 30 days)
@@ -332,13 +408,23 @@ final_signal = (
   - Model confidence over time
   - Fees paid (daily/monthly)
   - WebSocket health status
-- [ ] Telegram bot alerts for:
-  - Trade opened/closed (with details)
-  - Stop-loss hit
+- [ ] Lock down Grafana port (UFW / reverse proxy / VPN) — not public internet by default
+
+**Telegram (mobile UI — expand Phase 1 stub):**
+- [ ] `monitoring/telegram_bot.py` using `python-telegram-bot` (async)
+- [ ] Alert severities: `INFO`, `WARNING`, `CRITICAL` (max 10/hour per severity)
+- [ ] Alerts include: UTC timestamp, symbol/module, metrics, previous values where relevant
+- [ ] **CRITICAL** alerts include recommended action (e.g. “circuit breaker active — manual review”)
+- [ ] Event alerts:
+  - Trade opened/closed (symbol, side, size, price, P&L)
+  - Stop-loss / take-profit hit
   - Circuit breaker triggered
   - Model drift detected
-  - System errors
-  - Daily P&L summary at 00:00 UTC
+  - System errors (stack summary, not secrets)
+  - Daily P&L summary at 00:00 UTC (Celery beat or scheduler)
+- [ ] Optional read-only commands (whitelist `TELEGRAM_CHAT_ID` only): `/status`, `/positions`, `/pnl`
+- [ ] If Telegram API is down: log error, continue trading
+
 - [ ] Health checks every 60 seconds:
   - WebSocket connections alive
   - DB write latency < 100ms
@@ -351,6 +437,8 @@ final_signal = (
 ### PHASE 6 — Paper Trading
 **Duration:** Week 9–10 (minimum 2 weeks, no exceptions)  
 **Goal:** Prove the system works end-to-end with zero financial risk.
+
+> **Run paper trading on the Ubuntu server**, not the laptop (needs 24/7 uptime). Laptop is for fixes → GitHub → server redeploy.
 
 - [ ] Paper trading mode: real market data, simulated orders, tracked P&L
 - [ ] Run identically to live — same code path, just order execution is mocked
@@ -400,9 +488,11 @@ final_signal = (
 ### PHASE 8 — Go Live
 **Duration:** Week 13+
 
+> Production runs on **Ubuntu server** only. Binance API key: **trade-only**, **IP whitelist = server public IP**.
+
 **Week 13: Soft Launch**
 - [ ] Deploy 10% of budget ($50–$500 depending on total)
-- [ ] Monitor intensely for first week (check every few hours)
+- [ ] Monitor via **Telegram + Grafana** every few hours for the first week
 - [ ] Compare live results to paper trading and backtest
 
 **Week 14–16: Scale Up**
@@ -418,9 +508,20 @@ final_signal = (
 
 ---
 
+## 🖥️ Server Setup Checklist (Ubuntu)
+
+- [ ] Install Docker Engine + Docker Compose plugin
+- [ ] Clone repo: `git clone` → configure `.env` on server only
+- [ ] UFW: allow SSH; restrict Grafana/API ports
+- [ ] `scripts/deploy.sh`: `git pull` + `docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build`
+- [ ] Optional: separate Telegram bot for prod vs dev alerts
+
+---
+
 ## 🔐 Security Checklist
 
 - [ ] API keys stored only in `.env` — never in code or git
+- [ ] `TELEGRAM_BOT_TOKEN` only in `.env` — rotate via @BotFather if leaked
 - [ ] Binance API: enable IP whitelist to VPS IP only
 - [ ] Binance API: enable Trade permissions only — NO withdrawal permission
 - [ ] VPS: SSH key only (no password login)
@@ -495,8 +596,8 @@ optuna==3.6.1
 evidently==0.4.30
 python-telegram-bot==21.3
 
-# Backtesting
-vectorbt==0.26.1
+# Backtesting (optional — research/exploration only; gate uses event-driven engine)
+# vectorbt==0.26.1
 
 # Utils
 httpx==0.27.0
