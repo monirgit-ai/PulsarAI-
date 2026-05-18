@@ -13,6 +13,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
         env_nested_delimiter="__",
+        protected_namespaces=("settings_",),
     )
 
     environment: Literal["development", "staging", "production"] = "development"
@@ -63,6 +64,15 @@ class Settings(BaseSettings):
     historical_days: int = 90
     top_pairs_count: int = 10
     binance_rest_delay_seconds: float = 0.2
+
+    # Model training
+    model_train_limit: int = 5000
+    rl_train_timesteps: int = 30_000
+    tft_train_epochs: int = 25
+    ensemble_regime_weight: float = 0.25
+    ensemble_tft_weight: float = 0.35
+    ensemble_rl_weight: float = 0.25
+    ensemble_sentiment_weight: float = 0.15
 
     @property
     def ws_kline_interval_list(self) -> list[str]:

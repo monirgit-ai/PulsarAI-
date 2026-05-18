@@ -314,14 +314,15 @@ services:
 - [x] Phase 1 (Week 1): Docker stack, TimescaleDB schema, FastAPI health, bot health loop, Telegram stub
 - [x] Phase 1 (Week 2): Historical download + WebSocket ingestion + features
 - [x] Phase 2: Backtesting engine + walk-forward validation + HTML reports
-- [ ] Phase 3: AI models (Regime + TFT + RL + Sentiment)
+- [x] Phase 3: AI models (Regime + TFT/LSTM + RL + Sentiment + Ensemble)
+- [ ] Phase 4: Risk engine + Order execution
 - [ ] Phase 4: Risk engine + Order execution
 - [ ] Phase 5: Monitoring (Grafana + **full Telegram alerts**)
 - [ ] Phase 6: Paper trading on **server** (minimum 2 weeks)
 - [ ] Phase 7: Self-driving layer (auto-retrain + meta-learning)
 - [ ] Phase 8: Live deployment on **server** (start with 10% budget)
 
-**Current Phase:** Phase 3 — AI models (next)  
+**Current Phase:** Phase 4 — Risk engine + execution (next)  
 **Dev workflow:** Laptop → GitHub → Ubuntu server  
 **Ports (host):** API 18888, Postgres 15432, Redis 16379, Grafana 13000, Prometheus 19090  
 **Last Updated:** 2026-05-18  
